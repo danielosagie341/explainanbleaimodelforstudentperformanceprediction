@@ -1,0 +1,13 @@
+flask
+pandas
+numpy
+scikit-learn==1.4.2
+matplotlib
+seaborn
+shap
+lime
+jupyter
+streamlit
+missingno
+joblib
+plotly
