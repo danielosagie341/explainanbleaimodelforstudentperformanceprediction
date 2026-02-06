@@ -526,59 +526,102 @@
         });
 
         function displayResults(result) {
-            // Create results HTML
+            // 1. Format the CSS class for color (Good -> good, Below Average -> below-average)
             const categoryClass = result.category.toLowerCase().replace(' ', '-');
-            const resultsHTML = `
-                <div class="card" id="results">
+
+            // 2. Build the HTML string
+            let resultsHTML = `
+                <div class="card" id="results" style="margin-top: 2rem;">
+                    <!-- PROPER PREDICTION BOX -->
                     <div class="prediction-result ${categoryClass}">
                         <i class="fas fa-trophy"></i>
                         <div class="prediction-score">${result.prediction.toFixed(1)}</div>
-                        <div class="prediction-category">
-                            ${result.category} Performance
-                        </div>
+                        <div class="prediction-category">${result.category} Performance</div>
                         <p>Predicted Total Score out of 100</p>
                     </div>
                     
-                    ${result.explanations && result.explanations.length > 0 ? `
+                    <!-- KEY INSIGHTS (Text Explanations) -->
+                    ${result.insights && result.insights.length > 0 ? `
                         <div class="insights">
                             <h3><i class="fas fa-lightbulb"></i> Key Insights</h3>
-                            ${result.explanations.map(exp => `<div class="insight-item">${exp}</div>`).join('')}
+                            ${result.insights.map(text => {
+                                // Convert **bold** markdown to HTML bold
+                                const cleanText = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                                return `<div class="insight-item">${cleanText}</div>`;
+                            }).join('')}
                         </div>
                     ` : ''}
-                    
-                    ${result.feature_importance ? `
-                        <div class="insights">
-                            <h3><i class="fas fa-chart-bar"></i> Most Important Factors</h3>
-                            ${Object.entries(result.feature_importance)
-                                .sort((a, b) => b[1] - a[1])
-                                .slice(0, 5)
-                                .map(([feature, importance]) => 
-                                    `<div class="insight-item">
-                                        <strong>${feature.replace(/_/g, ' ')}</strong>: ${(importance * 100).toFixed(1)}% importance
-                                    </div>`
-                                ).join('')}
+
+                    <!-- SHAP TABLE (Detailed Numbers) -->
+                    ${result.shap_summary && result.shap_summary.length > 0 ? `
+                        <div class="card" style="margin-top: 20px; box-shadow: none; border: 1px solid #eee;">
+                            <div class="card-header" style="background:none; padding-bottom:0;">
+                                <h3><i class="fas fa-list-ol"></i> Feature Impact Details</h3>
+                            </div>
+                            <div class="shap-summary">
+                                <p style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">
+                                    How much each factor added or subtracted from the score:
+                                </p>
+                                ${result.shap_summary.map(item => `
+                                    <div class="shap-item">
+                                        <div class="shap-feature">
+                                            <strong>${item.feature}</strong> (Value: ${item.value})
+                                        </div>
+                                        <div class="shap-value ${item.impact.toLowerCase()}" style="font-weight: bold;">
+                                            ${item.shap_value > 0 ? '+' : ''}${item.shap_value}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
                         </div>
                     ` : ''}
+
+                    <!-- GRAPHS (Images) -->
+                    <div class="explanation-section" style="margin-top: 2rem;">
+                        <!-- Waterfall Plot -->
+                        ${result.waterfall_plot ? `
+                            <div class="card" style="margin-bottom: 1rem;">
+                                <div class="card-header">
+                                    <i class="fas fa-project-diagram"></i>
+                                    <h3>Detailed Prediction Logic</h3>
+                                </div>
+                                <div class="plot-container">
+                                    <img src="data:image/png;base64,${result.waterfall_plot}" style="width: 100%; border-radius: 8px;" alt="SHAP Waterfall Plot">
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        <!-- Feature Importance Plot -->
+                        ${result.importance_plot ? `
+                            <div class="card">
+                                <div class="card-header">
+                                    <i class="fas fa-chart-bar"></i>
+                                    <h3>Global Importance</h3>
+                                </div>
+                                <div class="plot-container">
+                                    <img src="data:image/png;base64,${result.importance_plot}" style="width: 100%; border-radius: 8px;" alt="Feature Importance Plot">
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
                 </div>
             `;
             
-            // Remove existing results
+            // 3. Remove old results if they exist to prevent duplicates
             const existingResults = document.getElementById('results');
-            if (existingResults) {
-                existingResults.remove();
-            }
+            if (existingResults) existingResults.remove();
             
-            // Add new results
+            // 4. Inject new results into the container
             const container = document.querySelector('.container');
             container.insertAdjacentHTML('beforeend', resultsHTML);
             
-            // Scroll to results
+            // 5. Scroll smoothly to the new results
             document.getElementById('results').scrollIntoView({ 
                 behavior: 'smooth',
                 block: 'start'
             });
         }
-
+      
         // Add some interactivity
         document.querySelectorAll('.form-input').forEach(input => {
             input.addEventListener('focus', function() {
