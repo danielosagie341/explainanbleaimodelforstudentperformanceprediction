@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import shap
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import base64
 from io import BytesIO
@@ -38,7 +38,6 @@ explainer = None
 try:
     print("Attempting to initialize SHAP...", file=sys.stdout)
     explainer = shap.TreeExplainer(model)
-    # Warmup
     sample_data = np.array([[85, 75, 80, 78, 82, 88, 85]])
     _ = explainer.shap_values(sample_data) 
     print("SHAP initialized successfully.", file=sys.stdout)
@@ -52,7 +51,7 @@ def create_feature_importance_plot():
             importances = model.feature_importances_
             indices = np.argsort(importances)[::-1]
             plt.figure(figsize=(10, 6))
-            plt.title("Feature Importance", fontsize=16, fontweight='bold')
+            plt.title("Global Feature Importance", fontsize=16, fontweight='bold')
             plt.bar(range(len(features)), importances[indices], 
                     color=['#4f8cff', '#38b6ff', '#2196F3', '#1976D2', '#0D47A1', '#1565C0', '#1E88E5'])
             plt.xlabel("Features", fontsize=12)
@@ -98,7 +97,7 @@ def create_shap_explanation(input_values):
             feature_names=features
         ), show=False)
         
-        plt.title("SHAP Explanation", fontsize=14, fontweight='bold')
+        plt.title("Why this prediction? (Waterfall Plot)", fontsize=14, fontweight='bold')
         plt.tight_layout()
         
         buffer = BytesIO()
@@ -127,27 +126,50 @@ def create_shap_explanation(input_values):
         print(f"SHAP chart error: {e}", file=sys.stderr)
         return "", [] 
 
-def get_prediction_insights(prediction, input_values):
+def get_prediction_insights(prediction, input_values, shap_summary=None):
     insights = []
+    
+    # 1. Performance Category
     if prediction >= 90: category = "Excellent"
     elif prediction >= 80: category = "Good"
     elif prediction >= 70: category = "Average"
     elif prediction >= 60: category = "Below Average"
     else: category = "Poor"
     
-    if category == "Excellent": insights.append("This student shows excellent performance!")
-    elif category == "Below Average" or category == "Poor": insights.append("This student requires additional support.")
-    else: insights.append("This student is performing steadily.")
+    # 2. SHAP-Based Explanations (The "Why")
+    if shap_summary and len(shap_summary) > 0:
+        # Get the top positive and top negative driver
+        top_driver = shap_summary[0]
+        
+        # Explain the biggest factor
+        if top_driver['shap_value'] > 0:
+            insights.append(f"✅ **Strength:** Your {top_driver['feature']} was the strongest asset, boosting your score.")
+        else:
+             insights.append(f"⚠️ **Main Weakness:** Your {top_driver['feature']} is the main factor pulling your score down.")
 
+        # Explain the second biggest factor if significant
+        if len(shap_summary) > 1:
+            second_driver = shap_summary[1]
+            if second_driver['abs_impact'] > 1: # Only mention if it had real impact
+                if second_driver['shap_value'] < 0:
+                    insights.append(f"⚠️ Focus on improving **{second_driver['feature']}** to see the quickest gains.")
+                else:
+                    insights.append(f"✅ **{second_driver['feature']}** is also contributing positively.")
+
+    # 3. Rule-Based Fallbacks (In case SHAP fails or specific advice is needed)
     attendance, midterm, final = input_values[0], input_values[1], input_values[2]
     
-    if attendance < 70: insights.append("⚠️ Low attendance (-70%) is impacting performance.")
+    if attendance < 75: 
+        insights.append("📅 **Action Item:** Increasing attendance to above 75% is highly recommended.")
+    
     if abs(midterm - final) > 15:
-        if final > midterm: insights.append("📈 Significant improvement from midterm to final!")
-        else: insights.append("📉 Performance declined from midterm to final.")
+        if final > midterm: 
+            insights.append("📈 **Trend:** Performance improved significantly from Midterm to Final.")
+        else: 
+            insights.append("📉 **Trend:** Performance dropped between Midterm and Final exams.")
     
     if explainer is None:
-        insights.append("ℹ️ AI Analysis (SHAP) disabled to save server resources.")
+        insights.append("ℹ️ Advanced AI explanations (SHAP) are currently disabled.")
 
     return category, insights
 
@@ -157,22 +179,24 @@ def index():
     if request.method == "POST":
         print(f"Processing request on: {request.path}", file=sys.stdout)
         try:
-            # 1. Parse Input Data (Handle both JSON and Form)
+            # 1. Parse Input
             if request.is_json:
                 data = request.get_json()
                 inputs = [float(data.get(feature, 0)) for feature in features]
             else:
                 inputs = [float(request.form[feature]) for feature in features]
 
-            # 2. Run Model (using DataFrame to fix warnings)
+            # 2. Run Prediction
             input_df = pd.DataFrame([inputs], columns=features)
             prediction = model.predict(input_df)[0]
             prediction = round(prediction, 2)
             
-            # 3. Generate Visuals
-            category, insights = get_prediction_insights(prediction, inputs)
+            # 3. Generate SHAP Explanations FIRST
             importance_plot = create_feature_importance_plot()
             waterfall_plot, shap_summary = create_shap_explanation(inputs)
+            
+            # 4. Generate Insights (Now passing shap_summary)
+            category, insights = get_prediction_insights(prediction, inputs, shap_summary)
             
             response_data = {
                 "prediction": prediction,
@@ -184,11 +208,11 @@ def index():
                 "success": True
             }
 
-            # 4. CRITICAL FIX: Return JSON if route is /predict OR headers were JSON
+            # 5. Return JSON if API
             if request.path == '/predict' or request.is_json:
                 return jsonify(response_data)
             
-            # 5. Default Fallback: Return HTML (Only for root URL form posts)
+            # 6. Return HTML Form
             return render_template("index.html", 
                                  features=features, feature_info=feature_info,
                                  prediction=prediction, category=category, insights=insights,
@@ -198,17 +222,11 @@ def index():
         except Exception as e:
             error_message = f"Error: {str(e)}"
             print(error_message, file=sys.stderr)
-            
-            # Return JSON error for API calls
             if request.path == '/predict' or request.is_json:
                 return jsonify({"error": error_message, "success": False}), 400
-
-            # Return HTML error for Page calls
-            return render_template("index.html", 
-                                 features=features, feature_info=feature_info, 
-                                 prediction=error_message, category="Error",
-                                 insights=[], importance_plot="", waterfall_plot="",
-                                 shap_summary=[], input_values={})
+            return render_template("index.html", features=features, feature_info=feature_info, 
+                                 prediction=error_message, category="Error", insights=[], 
+                                 importance_plot="", waterfall_plot="", shap_summary=[], input_values={})
     
     # GET request
     importance_plot = create_feature_importance_plot()
