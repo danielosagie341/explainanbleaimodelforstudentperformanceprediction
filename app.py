@@ -129,47 +129,49 @@ def create_shap_explanation(input_values):
 def get_prediction_insights(prediction, input_values, shap_summary=None):
     insights = []
     
-    # 1. Performance Category
-    if prediction >= 90: category = "Excellent"
-    elif prediction >= 80: category = "Good"
-    elif prediction >= 70: category = "Average"
-    elif prediction >= 60: category = "Below Average"
-    else: category = "Poor"
+    # 1. Performance Category Summary (Guarantees at least 1 insight)
+    if prediction >= 90: 
+        category = "Excellent"
+        insights.append("🌟 **Summary:** Outstanding performance. You are maximizing your potential across most metrics.")
+    elif prediction >= 80: 
+        category = "Good"
+        insights.append("👍 **Summary:** Strong performance. Minor improvements could push this to an 'Excellent' rating.")
+    elif prediction >= 70: 
+        category = "Average"
+        insights.append("📊 **Summary:** Consistent average performance. You are passing, but there is clear room for growth.")
+    elif prediction >= 60: 
+        category = "Below Average"
+        insights.append("⚠️ **Summary:** You are at risk of falling behind. Immediate attention to key areas is required.")
+    else: 
+        category = "Poor"
+        insights.append("🚨 **Summary:** Critical intervention needed. Current trajectory suggests a high risk of failure.")
     
-    # 2. SHAP-Based Explanations (The "Why")
-    if shap_summary and len(shap_summary) > 0:
-        # Get the top positive and top negative driver
-        top_driver = shap_summary[0]
+    # 2. Heuristic Analysis (Fallback if SHAP fails, guarantees explainability logic)
+    attendance, midterm, final, assignments, quizzes, participation, projects = input_values
+    
+    # Attendance Check
+    if attendance < 75:
+        insights.append("🗓️ **Attendance:** Your attendance is below 75%. Attending more classes is the easiest way to boost your grade.")
+    elif attendance > 90:
+        insights.append("✅ **Attendance:** Your high attendance is a strong stabilizing factor for your grade.")
         
-        # Explain the biggest factor
+    # Exam Trend
+    if final > midterm + 5:
+        insights.append("📈 **Trend:** Great job improving from Midterm to Finals. You learned the material well.")
+    elif midterm > final + 5:
+        insights.append("📉 **Trend:** Your performance dropped on the Final exam compared to the Midterm.")
+
+    # Effort Check (Assignments & Participation)
+    if assignments < 70 or participation < 70:
+        insights.append("📝 **Engagement:** Low scores in assignments or participation suggest you might be missing easy points.")
+
+    # 3. deeply integrated SHAP Analysis (If available)
+    if shap_summary and len(shap_summary) > 0:
+        top_driver = shap_summary[0]
         if top_driver['shap_value'] > 0:
-            insights.append(f"✅ **Strength:** Your {top_driver['feature']} was the strongest asset, boosting your score.")
+            insights.append(f"🏆 **Top Strength:** According to the AI, **{top_driver['feature']}** is the strongest factor lifting your score.")
         else:
-             insights.append(f"⚠️ **Main Weakness:** Your {top_driver['feature']} is the main factor pulling your score down.")
-
-        # Explain the second biggest factor if significant
-        if len(shap_summary) > 1:
-            second_driver = shap_summary[1]
-            if second_driver['abs_impact'] > 1: # Only mention if it had real impact
-                if second_driver['shap_value'] < 0:
-                    insights.append(f"⚠️ Focus on improving **{second_driver['feature']}** to see the quickest gains.")
-                else:
-                    insights.append(f"✅ **{second_driver['feature']}** is also contributing positively.")
-
-    # 3. Rule-Based Fallbacks (In case SHAP fails or specific advice is needed)
-    attendance, midterm, final = input_values[0], input_values[1], input_values[2]
-    
-    if attendance < 75: 
-        insights.append("📅 **Action Item:** Increasing attendance to above 75% is highly recommended.")
-    
-    if abs(midterm - final) > 15:
-        if final > midterm: 
-            insights.append("📈 **Trend:** Performance improved significantly from Midterm to Final.")
-        else: 
-            insights.append("📉 **Trend:** Performance dropped between Midterm and Final exams.")
-    
-    if explainer is None:
-        insights.append("ℹ️ Advanced AI explanations (SHAP) are currently disabled.")
+            insights.append(f"🛑 **Primary Drag:** The AI identified **{top_driver['feature']}** as the main factor pulling your score down.")
 
     return category, insights
 
@@ -191,11 +193,11 @@ def index():
             prediction = model.predict(input_df)[0]
             prediction = round(prediction, 2)
             
-            # 3. Generate SHAP Explanations FIRST
+            # 3. Generate Visuals
             importance_plot = create_feature_importance_plot()
             waterfall_plot, shap_summary = create_shap_explanation(inputs)
             
-            # 4. Generate Insights (Now passing shap_summary)
+            # 4. Generate Insights
             category, insights = get_prediction_insights(prediction, inputs, shap_summary)
             
             response_data = {
@@ -212,7 +214,7 @@ def index():
             if request.path == '/predict' or request.is_json:
                 return jsonify(response_data)
             
-            # 6. Return HTML Form
+            # 6. Return HTML Form (Fallback)
             return render_template("index.html", 
                                  features=features, feature_info=feature_info,
                                  prediction=prediction, category=category, insights=insights,
