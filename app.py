@@ -10,7 +10,7 @@ import base64
 from io import BytesIO
 import json
 import werkzeug
-import sys # Added for logging
+import sys 
 
 app = Flask(__name__)
 
@@ -33,25 +33,17 @@ feature_info = {
     "Projects_Score": {"min": 0, "max": 100, "optional": False, "description": "Project work score"}
 }
 
-# STARTUP: Initialize SHAP (Memory Intensive)
-sample_data = np.array([
-    [85, 75, 80, 78, 82, 88, 85],
-    [60, 65, 70, 68, 72, 75, 70],  
-    [45, 50, 55, 52, 58, 60, 55],
-    [95, 90, 95, 92, 94, 96, 90],
-    [70, 68, 75, 72, 76, 80, 75]
-])
-
+# STARTUP: Initialize SHAP
 explainer = None
 try:
     print("Attempting to initialize SHAP...", file=sys.stdout)
     explainer = shap.TreeExplainer(model)
     # Warmup
-    _ = explainer.shap_values(sample_data[0:1]) 
+    sample_data = np.array([[85, 75, 80, 78, 82, 88, 85]])
+    _ = explainer.shap_values(sample_data) 
     print("SHAP initialized successfully.", file=sys.stdout)
 except Exception as e:
-    # On Free Tier, this often fails due to memory. We catch it so app doesn't crash.
-    print(f"⚠️ SHAP initialization failed (Low Memory?): {e}", file=sys.stderr)
+    print(f"⚠️ SHAP initialization failed: {e}", file=sys.stderr)
     explainer = None
 
 def create_feature_importance_plot():
@@ -59,12 +51,10 @@ def create_feature_importance_plot():
         if hasattr(model, 'feature_importances_'):
             importances = model.feature_importances_
             indices = np.argsort(importances)[::-1]
-            
             plt.figure(figsize=(10, 6))
             plt.title("Feature Importance", fontsize=16, fontweight='bold')
-            bars = plt.bar(range(len(features)), importances[indices], 
-                          color=['#4f8cff', '#38b6ff', '#2196F3', '#1976D2', 
-                                '#0D47A1', '#1565C0', '#1E88E5'])
+            plt.bar(range(len(features)), importances[indices], 
+                    color=['#4f8cff', '#38b6ff', '#2196F3', '#1976D2', '#0D47A1', '#1565C0', '#1E88E5'])
             plt.xlabel("Features", fontsize=12)
             plt.ylabel("Importance", fontsize=12)
             plt.xticks(range(len(features)), [features[i] for i in indices], rotation=45, ha='right')
@@ -79,13 +69,12 @@ def create_feature_importance_plot():
             return base64.b64encode(plot_data).decode()
     except Exception as e:
         print(f"Feature importance error: {e}", file=sys.stderr)
-    return "" # Return empty string instead of None to be safe for JS
+    return "" 
 
 def create_shap_explanation(input_values):
     try:
         if explainer is None:
-            print("Skipping SHAP: Explainer not initialized", file=sys.stderr)
-            return "", [] # Return safe empty values
+            return "", [] 
             
         shap_values = explainer.shap_values(np.array([input_values]))
         
@@ -136,12 +125,10 @@ def create_shap_explanation(input_values):
         return waterfall_plot, shap_summary
     except Exception as e:
         print(f"SHAP chart error: {e}", file=sys.stderr)
-        return "", [] # Return safe empty values
+        return "", [] 
 
 def get_prediction_insights(prediction, input_values):
     insights = []
-    
-    # ... logic ...
     if prediction >= 90: category = "Excellent"
     elif prediction >= 80: category = "Good"
     elif prediction >= 70: category = "Average"
@@ -152,18 +139,15 @@ def get_prediction_insights(prediction, input_values):
     elif category == "Below Average" or category == "Poor": insights.append("This student requires additional support.")
     else: insights.append("This student is performing steadily.")
 
-    attendance = input_values[0]
-    midterm = input_values[1]
-    final = input_values[2]
+    attendance, midterm, final = input_values[0], input_values[1], input_values[2]
     
     if attendance < 70: insights.append("⚠️ Low attendance (-70%) is impacting performance.")
     if abs(midterm - final) > 15:
         if final > midterm: insights.append("📈 Significant improvement from midterm to final!")
         else: insights.append("📉 Performance declined from midterm to final.")
     
-    # Add note if SHAP unavailable
     if explainer is None:
-        insights.append("ℹ️ Detailed AI (SHAP) analysis unavailable due to server constraints.")
+        insights.append("ℹ️ AI Analysis (SHAP) disabled to save server resources.")
 
     return category, insights
 
@@ -171,19 +155,21 @@ def get_prediction_insights(prediction, input_values):
 @app.route("/predict", methods=["POST"])
 def index():
     if request.method == "POST":
-        print("Received prediction request", file=sys.stdout) # Log entry
+        print(f"Processing request on: {request.path}", file=sys.stdout)
         try:
+            # 1. Parse Input Data (Handle both JSON and Form)
             if request.is_json:
                 data = request.get_json()
                 inputs = [float(data.get(feature, 0)) for feature in features]
             else:
                 inputs = [float(request.form[feature]) for feature in features]
 
-            # Calculation
+            # 2. Run Model (using DataFrame to fix warnings)
             input_df = pd.DataFrame([inputs], columns=features)
             prediction = model.predict(input_df)[0]
             prediction = round(prediction, 2)
             
+            # 3. Generate Visuals
             category, insights = get_prediction_insights(prediction, inputs)
             importance_plot = create_feature_importance_plot()
             waterfall_plot, shap_summary = create_shap_explanation(inputs)
@@ -192,16 +178,17 @@ def index():
                 "prediction": prediction,
                 "category": category,
                 "insights": insights,
-                # Return empty strings instead of None to prevent JS crashes
                 "importance_plot": importance_plot or "",
                 "waterfall_plot": waterfall_plot or "",
-                "shap_summary": shap_summary or []
+                "shap_summary": shap_summary or [],
+                "success": True
             }
 
-            if request.is_json:
+            # 4. CRITICAL FIX: Return JSON if route is /predict OR headers were JSON
+            if request.path == '/predict' or request.is_json:
                 return jsonify(response_data)
             
-            # Form Response
+            # 5. Default Fallback: Return HTML (Only for root URL form posts)
             return render_template("index.html", 
                                  features=features, feature_info=feature_info,
                                  prediction=prediction, category=category, insights=insights,
@@ -209,13 +196,14 @@ def index():
                                  shap_summary=shap_summary, input_values=dict(zip(features, inputs)))
 
         except Exception as e:
-            error_message = f"Processing Error: {str(e)}"
+            error_message = f"Error: {str(e)}"
             print(error_message, file=sys.stderr)
             
-            if request.is_json:
-                return jsonify({"error": error_message}), 400
+            # Return JSON error for API calls
+            if request.path == '/predict' or request.is_json:
+                return jsonify({"error": error_message, "success": False}), 400
 
-            # Safe Fallback for HTML
+            # Return HTML error for Page calls
             return render_template("index.html", 
                                  features=features, feature_info=feature_info, 
                                  prediction=error_message, category="Error",
