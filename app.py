@@ -22,19 +22,30 @@ features = [
     "Participation_Score", "Projects_Score"
 ]
 
-# Initialize SHAP explainer (we'll do this once to avoid recomputation)
-# Create sample data for SHAP explainer initialization
+# FIX: Define feature metadata for the HTML template
+feature_info = {
+    "Attendance (%)": {"min": 0, "max": 100, "optional": False, "description": "Percentage of classes attended"},
+    "Midterm_Score": {"min": 0, "max": 100, "optional": False, "description": "Score out of 100"},
+    "Final_Score": {"min": 0, "max": 100, "optional": False, "description": "Score out of 100"},
+    "Assignments_Avg": {"min": 0, "max": 100, "optional": False, "description": "Average assignment score"},
+    "Quizzes_Avg": {"min": 0, "max": 100, "optional": False, "description": "Average quiz score"},
+    "Participation_Score": {"min": 0, "max": 100, "optional": False, "description": "Class participation score"},
+    "Projects_Score": {"min": 0, "max": 100, "optional": False, "description": "Project work score"}
+}
+
+# Initialize SHAP explainer
 sample_data = np.array([
-    [85, 75, 80, 78, 82, 88, 85],  # Good student
-    [60, 65, 70, 68, 72, 75, 70],  # Average student  
-    [45, 50, 55, 52, 58, 60, 55],  # Struggling student
-    [95, 90, 95, 92, 94, 96, 90],  # Excellent student
-    [70, 68, 75, 72, 76, 80, 75]   # Above average student
+    [85, 75, 80, 78, 82, 88, 85],
+    [60, 65, 70, 68, 72, 75, 70],  
+    [45, 50, 55, 52, 58, 60, 55],
+    [95, 90, 95, 92, 94, 96, 90],
+    [70, 68, 75, 72, 76, 80, 75]
 ])
 
 try:
     explainer = shap.TreeExplainer(model)
-    shap_values_sample = explainer.shap_values(sample_data)
+    # Perform a warm-up calculation to ensure it's ready
+    _ = explainer.shap_values(sample_data[0:1]) 
 except Exception as e:
     print(f"SHAP initialization error: {e}")
     explainer = None
@@ -56,7 +67,6 @@ def create_feature_importance_plot():
             plt.xticks(range(len(features)), [features[i] for i in indices], rotation=45, ha='right')
             plt.tight_layout()
             
-            # Convert plot to base64 string
             buffer = BytesIO()
             plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight')
             buffer.seek(0)
@@ -75,21 +85,35 @@ def create_shap_explanation(input_values):
         if explainer is None:
             return None, None
             
-        # Get SHAP values for the input
         shap_values = explainer.shap_values(np.array([input_values]))
         
-        # Create SHAP waterfall plot
         plt.figure(figsize=(10, 6))
+        
+        # Determine the expected value (base value)
+        # For classifiers, this might be a list; for regressors, a float.
+        base_val = explainer.expected_value
+        if isinstance(base_val, list) or isinstance(base_val, np.ndarray):
+            # Handle binary classification case (if applicable)
+            if len(base_val) > 1:
+                base_val = base_val[1] # Positive class
+                vals = shap_values[1][0] 
+            else:
+                base_val = base_val[0]
+                vals = shap_values[0]
+        else:
+            # Regression case
+            vals = shap_values[0]
+
         shap.waterfall_plot(shap.Explanation(
-            values=shap_values[0], 
-            base_values=explainer.expected_value, 
+            values=vals, 
+            base_values=base_val, 
             data=np.array(input_values),
             feature_names=features
         ), show=False)
-        plt.title("SHAP Explanation - How each feature affects the prediction", fontsize=14, fontweight='bold')
+        
+        plt.title("SHAP Explanation - Impact on Prediction", fontsize=14, fontweight='bold')
         plt.tight_layout()
         
-        # Convert plot to base64 string
         buffer = BytesIO()
         plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight')
         buffer.seek(0)
@@ -99,9 +123,9 @@ def create_shap_explanation(input_values):
         
         waterfall_plot = base64.b64encode(plot_data).decode()
         
-        # Create SHAP values summary
+        # SHAP Summary
         shap_summary = []
-        for i, (feature, value, shap_val) in enumerate(zip(features, input_values, shap_values[0])):
+        for i, (feature, value, shap_val) in enumerate(zip(features, input_values, vals)):
             impact = "Positive" if shap_val > 0 else "Negative" if shap_val < 0 else "Neutral"
             shap_summary.append({
                 'feature': feature,
@@ -111,7 +135,6 @@ def create_shap_explanation(input_values):
                 'abs_impact': abs(shap_val)
             })
         
-        # Sort by absolute impact
         shap_summary.sort(key=lambda x: x['abs_impact'], reverse=True)
         
         return waterfall_plot, shap_summary
@@ -120,10 +143,8 @@ def create_shap_explanation(input_values):
         return None, None
 
 def get_prediction_insights(prediction, input_values):
-    """Provide insights about the prediction"""
     insights = []
     
-    # Performance categories
     if prediction >= 90:
         category = "Excellent"
         insights.append("This student shows excellent performance across all metrics!")
@@ -140,24 +161,15 @@ def get_prediction_insights(prediction, input_values):
         category = "Poor"
         insights.append("This student requires immediate intervention and support.")
     
-    # Specific insights based on input values
     attendance, midterm, final, assignments, quizzes, participation, projects = input_values
     
     if attendance < 70:
-        insights.append("⚠️ Low attendance is likely impacting performance significantly.")
-    elif attendance > 90:
-        insights.append("✅ Excellent attendance contributes positively to performance.")
-    
+        insights.append("⚠️ Low attendance (-70%) is likely impacting performance.")
     if abs(midterm - final) > 15:
         if final > midterm:
-            insights.append("📈 Significant improvement from midterm to final exam!")
+            insights.append("📈 Significant improvement from midterm to final!")
         else:
-            insights.append("📉 Performance declined from midterm to final exam.")
-    
-    if assignments < 70:
-        insights.append("📝 Assignment performance needs improvement.")
-    elif assignments > 85:
-        insights.append("📝 Strong assignment performance!")
+            insights.append("📉 Performance declined from midterm to final.")
     
     return category, insights
 
@@ -165,24 +177,18 @@ def get_prediction_insights(prediction, input_values):
 def index():
     if request.method == "POST":
         try:
-            # Collect input values from form
             inputs = [float(request.form[feature]) for feature in features]
             
-            # Make prediction
             prediction = model.predict([inputs])[0]
             prediction = round(prediction, 2)
             
-            # Get prediction insights
             category, insights = get_prediction_insights(prediction, inputs)
-            
-            # Create feature importance plot
             importance_plot = create_feature_importance_plot()
-            
-            # Create SHAP explanation
             waterfall_plot, shap_summary = create_shap_explanation(inputs)
             
             return render_template("index.html", 
                                  features=features, 
+                                 feature_info=feature_info, # ADDED: Pass this dictionary
                                  prediction=prediction,
                                  category=category,
                                  insights=insights,
@@ -193,35 +199,15 @@ def index():
         except Exception as e:
             return render_template("index.html", 
                                  features=features, 
+                                 feature_info=feature_info, # ADDED here too
                                  prediction=f"Error: {str(e)}")
     
-    # For GET requests, show feature importance
+    # GET request
     importance_plot = create_feature_importance_plot()
     return render_template("index.html", 
                          features=features, 
+                         feature_info=feature_info, # ADDED here too
                          importance_plot=importance_plot)
-
-@app.route("/api/predict", methods=["POST"])
-def api_predict():
-    """API endpoint for predictions"""
-    try:
-        data = request.json
-        inputs = [float(data[feature]) for feature in features]
-        prediction = model.predict([inputs])[0]
-        
-        category, insights = get_prediction_insights(prediction, inputs)
-        
-        return jsonify({
-            'prediction': round(prediction, 2),
-            'category': category,
-            'insights': insights,
-            'success': True
-        })
-    except Exception as e:
-        return jsonify({
-            'error': str(e),
-            'success': False
-        }), 400
 
 if __name__ == "__main__":
     app.run(debug=True)
