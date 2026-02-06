@@ -174,9 +174,18 @@ def get_prediction_insights(prediction, input_values):
     return category, insights
 
 @app.route("/", methods=["GET", "POST"])
+@app.route("/predict", methods=["POST"])  # <--- ADD THIS LINE
 def index():
     if request.method == "POST":
         try:
+            # Check if it is a JSON request (API style) or Form request (HTML style)
+            if request.is_json:
+                data = request.get_json()
+                inputs = [float(data[feature]) for feature in features]
+            else:
+                inputs = [float(request.form[feature]) for feature in features]
+                
+                
             inputs = [float(request.form[feature]) for feature in features]
             
             prediction = model.predict([inputs])[0]
