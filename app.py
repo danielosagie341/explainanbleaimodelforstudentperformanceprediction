@@ -10,13 +10,13 @@ import base64
 from io import BytesIO
 import json
 import werkzeug
+import sys # Added for logging
 
 app = Flask(__name__)
 
 # Load the trained model
 model = joblib.load("random_forest_model1.pkl")
 
-# List of input features expected by the model
 features = [
     "Attendance (%)", "Midterm_Score", "Final_Score", 
     "Assignments_Avg", "Quizzes_Avg", 
@@ -33,7 +33,7 @@ feature_info = {
     "Projects_Score": {"min": 0, "max": 100, "optional": False, "description": "Project work score"}
 }
 
-# Initialize SHAP explainer
+# STARTUP: Initialize SHAP (Memory Intensive)
 sample_data = np.array([
     [85, 75, 80, 78, 82, 88, 85],
     [60, 65, 70, 68, 72, 75, 70],  
@@ -42,11 +42,16 @@ sample_data = np.array([
     [70, 68, 75, 72, 76, 80, 75]
 ])
 
+explainer = None
 try:
+    print("Attempting to initialize SHAP...", file=sys.stdout)
     explainer = shap.TreeExplainer(model)
+    # Warmup
     _ = explainer.shap_values(sample_data[0:1]) 
+    print("SHAP initialized successfully.", file=sys.stdout)
 except Exception as e:
-    print(f"SHAP initialization error: {e}")
+    # On Free Tier, this often fails due to memory. We catch it so app doesn't crash.
+    print(f"⚠️ SHAP initialization failed (Low Memory?): {e}", file=sys.stderr)
     explainer = None
 
 def create_feature_importance_plot():
@@ -71,16 +76,16 @@ def create_feature_importance_plot():
             plot_data = buffer.getvalue()
             buffer.close()
             plt.close()
-            
             return base64.b64encode(plot_data).decode()
     except Exception as e:
-        print(f"Feature importance plot error: {e}")
-        return None
+        print(f"Feature importance error: {e}", file=sys.stderr)
+    return "" # Return empty string instead of None to be safe for JS
 
 def create_shap_explanation(input_values):
     try:
         if explainer is None:
-            return None, None
+            print("Skipping SHAP: Explainer not initialized", file=sys.stderr)
+            return "", [] # Return safe empty values
             
         shap_values = explainer.shap_values(np.array([input_values]))
         
@@ -104,7 +109,7 @@ def create_shap_explanation(input_values):
             feature_names=features
         ), show=False)
         
-        plt.title("SHAP Explanation - Impact on Prediction", fontsize=14, fontweight='bold')
+        plt.title("SHAP Explanation", fontsize=14, fontweight='bold')
         plt.tight_layout()
         
         buffer = BytesIO()
@@ -128,52 +133,45 @@ def create_shap_explanation(input_values):
             })
         
         shap_summary.sort(key=lambda x: x['abs_impact'], reverse=True)
-        
         return waterfall_plot, shap_summary
     except Exception as e:
-        print(f"SHAP explanation error: {e}")
-        return None, None
+        print(f"SHAP chart error: {e}", file=sys.stderr)
+        return "", [] # Return safe empty values
 
 def get_prediction_insights(prediction, input_values):
     insights = []
     
-    if prediction >= 90:
-        category = "Excellent"
-    elif prediction >= 80:
-        category = "Good"
-    elif prediction >= 70:
-        category = "Average"
-    elif prediction >= 60:
-        category = "Below Average"
-    else:
-        category = "Poor"
+    # ... logic ...
+    if prediction >= 90: category = "Excellent"
+    elif prediction >= 80: category = "Good"
+    elif prediction >= 70: category = "Average"
+    elif prediction >= 60: category = "Below Average"
+    else: category = "Poor"
     
-    # Generic insights based on category
-    if category == "Excellent":
-        insights.append("This student shows excellent performance across all metrics!")
-    elif category == "Below Average" or category == "Poor":
-        insights.append("This student requires additional support.")
-    else:
-        insights.append("This student is performing steadily.")
+    if category == "Excellent": insights.append("This student shows excellent performance!")
+    elif category == "Below Average" or category == "Poor": insights.append("This student requires additional support.")
+    else: insights.append("This student is performing steadily.")
 
     attendance = input_values[0]
     midterm = input_values[1]
     final = input_values[2]
     
-    if attendance < 70:
-        insights.append("⚠️ Low attendance (-70%) is likely impacting performance.")
+    if attendance < 70: insights.append("⚠️ Low attendance (-70%) is impacting performance.")
     if abs(midterm - final) > 15:
-        if final > midterm:
-            insights.append("📈 Significant improvement from midterm to final!")
-        else:
-            insights.append("📉 Performance declined from midterm to final.")
+        if final > midterm: insights.append("📈 Significant improvement from midterm to final!")
+        else: insights.append("📉 Performance declined from midterm to final.")
     
+    # Add note if SHAP unavailable
+    if explainer is None:
+        insights.append("ℹ️ Detailed AI (SHAP) analysis unavailable due to server constraints.")
+
     return category, insights
 
 @app.route("/", methods=["GET", "POST"])
 @app.route("/predict", methods=["POST"])
 def index():
     if request.method == "POST":
+        print("Received prediction request", file=sys.stdout) # Log entry
         try:
             if request.is_json:
                 data = request.get_json()
@@ -181,7 +179,7 @@ def index():
             else:
                 inputs = [float(request.form[feature]) for feature in features]
 
-            # OPTIONAL: Use DataFrame to silence sklearn "feature names" warning
+            # Calculation
             input_df = pd.DataFrame([inputs], columns=features)
             prediction = model.predict(input_df)[0]
             prediction = round(prediction, 2)
@@ -190,51 +188,43 @@ def index():
             importance_plot = create_feature_importance_plot()
             waterfall_plot, shap_summary = create_shap_explanation(inputs)
             
+            response_data = {
+                "prediction": prediction,
+                "category": category,
+                "insights": insights,
+                # Return empty strings instead of None to prevent JS crashes
+                "importance_plot": importance_plot or "",
+                "waterfall_plot": waterfall_plot or "",
+                "shap_summary": shap_summary or []
+            }
+
             if request.is_json:
-                # FIX: Include ALL plot data in the JSON response
-                return jsonify({
-                    "prediction": prediction,
-                    "category": category,
-                    "insights": insights,
-                    "importance_plot": importance_plot, # Was missing
-                    "waterfall_plot": waterfall_plot,   # Was missing
-                    "shap_summary": shap_summary        # Was missing
-                })
+                return jsonify(response_data)
             
+            # Form Response
             return render_template("index.html", 
-                                 features=features, 
-                                 feature_info=feature_info,
-                                 prediction=prediction,
-                                 category=category,
-                                 insights=insights,
-                                 importance_plot=importance_plot,
-                                 waterfall_plot=waterfall_plot,
-                                 shap_summary=shap_summary,
-                                 input_values=dict(zip(features, inputs)))
+                                 features=features, feature_info=feature_info,
+                                 prediction=prediction, category=category, insights=insights,
+                                 importance_plot=importance_plot, waterfall_plot=waterfall_plot,
+                                 shap_summary=shap_summary, input_values=dict(zip(features, inputs)))
+
         except Exception as e:
-            error_message = f"Error: {str(e)}"
-            print(error_message)
+            error_message = f"Processing Error: {str(e)}"
+            print(error_message, file=sys.stderr)
             
             if request.is_json:
                 return jsonify({"error": error_message}), 400
 
+            # Safe Fallback for HTML
             return render_template("index.html", 
-                                 features=features, 
-                                 feature_info=feature_info, 
-                                 prediction=error_message,
-                                 category="Error",
-                                 insights=[],
-                                 importance_plot=None,
-                                 waterfall_plot=None,
-                                 shap_summary=[],
-                                 input_values={})
+                                 features=features, feature_info=feature_info, 
+                                 prediction=error_message, category="Error",
+                                 insights=[], importance_plot="", waterfall_plot="",
+                                 shap_summary=[], input_values={})
     
     # GET request
     importance_plot = create_feature_importance_plot()
-    return render_template("index.html", 
-                         features=features, 
-                         feature_info=feature_info,
-                         importance_plot=importance_plot)
+    return render_template("index.html", features=features, feature_info=feature_info, importance_plot=importance_plot or "")
 
 if __name__ == "__main__":
     app.run(debug=True)
