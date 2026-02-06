@@ -175,17 +175,15 @@ def get_prediction_insights(prediction, input_values):
 def index():
     if request.method == "POST":
         try:
-            # FIX: Correctly switch between JSON and Form data without overwriting variables
-            # or crashing on missing keys.
             if request.is_json:
                 data = request.get_json()
                 inputs = [float(data.get(feature, 0)) for feature in features]
             else:
                 inputs = [float(request.form[feature]) for feature in features]
 
-            # PREVIOUSLY DUPLICATE LINE REMOVED HERE
-            
-            prediction = model.predict([inputs])[0]
+            # OPTIONAL: Use DataFrame to silence sklearn "feature names" warning
+            input_df = pd.DataFrame([inputs], columns=features)
+            prediction = model.predict(input_df)[0]
             prediction = round(prediction, 2)
             
             category, insights = get_prediction_insights(prediction, inputs)
@@ -193,10 +191,14 @@ def index():
             waterfall_plot, shap_summary = create_shap_explanation(inputs)
             
             if request.is_json:
+                # FIX: Include ALL plot data in the JSON response
                 return jsonify({
                     "prediction": prediction,
                     "category": category,
-                    "insights": insights
+                    "insights": insights,
+                    "importance_plot": importance_plot, # Was missing
+                    "waterfall_plot": waterfall_plot,   # Was missing
+                    "shap_summary": shap_summary        # Was missing
                 })
             
             return render_template("index.html", 
@@ -211,18 +213,16 @@ def index():
                                  input_values=dict(zip(features, inputs)))
         except Exception as e:
             error_message = f"Error: {str(e)}"
-            print(error_message) # Print to Render logs
+            print(error_message)
             
-            # FIX: If client expects JSON (API), return JSON, not HTML
             if request.is_json:
                 return jsonify({"error": error_message}), 400
 
-            # FIX: Pass 'category' and other variables to prevent HTML template crash
             return render_template("index.html", 
                                  features=features, 
                                  feature_info=feature_info, 
                                  prediction=error_message,
-                                 category="Error", # Required by template to avoid UndefinedError
+                                 category="Error",
                                  insights=[],
                                  importance_plot=None,
                                  waterfall_plot=None,
