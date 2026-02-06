@@ -240,9 +240,9 @@ def health():
     })
 
 if __name__ == '__main__':
-    print("🎓 Starting Explainable AI Student Performance Predictor...")
-    print(f"📊 Model Status: {'✅ Loaded' if model else '❌ Not Loaded'}")
-    print("🌐 Access the application at: http://localhost:5000")
-    print("📱 The app will open automatically in your browser")
+    print(" Starting Explainable AI Student Performance Predictor...")
+    print(f" Model Status: {' Loaded' if model else ' Not Loaded'}")
+    print(" Access the application at: http://localhost:5000")
+    print(" The app will open automatically in your browser")
     
     app.run(debug=True, host='0.0.0.0', port=5000)

@@ -9,5 +9,6 @@ lime
 jupyter
 streamlit
 missingno
+gunicorn
 joblib
 plotly
